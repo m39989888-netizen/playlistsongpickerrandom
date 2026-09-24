@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Playlist Picker (1st version)</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,700;12..96,800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f3f0ff;--ink:#1b1340;--mute:#6b6494;--card:#ffffff;--line:#d8d0ff;--hot:#ff4f81;--hotink:#fff;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#150f33;--ink:#f1edff;--mute:#a59ed0;--card:#221a4d;--line:#3a2f74;--hot:#ff6b95;--hotink:#1b1340}}
+:root[data-theme="dark"]{--bg:#150f33;--ink:#f1edff;--mute:#a59ed0;--card:#221a4d;--line:#3a2f74;--hot:#ff6b95;--hotink:#1b1340}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Bricolage Grotesque",system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.45}
+main{max-width:560px;margin:0 auto;padding:28px 20px 48px}
+h1{font-size:1.5rem;margin:0 0 4px;font-weight:800}
+.sub{color:var(--mute);margin:0 0 20px}
+.card{background:var(--card);border:2px solid var(--line);border-radius:18px;padding:16px}
+.drop{display:block;border:2px dashed var(--line);border-radius:14px;padding:18px;text-align:center;cursor:pointer;color:var(--mute)}
+.drop:hover,.drop.over,.drop:focus-within{border-color:var(--hot);color:var(--ink)}
+.drop input{position:absolute;opacity:0;width:1px;height:1px}
+textarea{width:100%;min-height:96px;margin-top:12px;border:2px solid var(--line);border-radius:12px;background:transparent;color:var(--ink);font:inherit;padding:10px;resize:vertical}
+textarea:focus,button:focus-visible{outline:3px solid var(--hot);outline-offset:2px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.ghost{background:transparent;border:2px solid var(--line);color:var(--ink);border-radius:999px;padding:8px 14px;font:inherit;cursor:pointer}
+.ghost:hover{border-color:var(--hot)}
+.count{margin-top:14px;color:var(--mute);min-height:1.4em}
+.stage{margin-top:22px;text-align:center}
+#num{font-size:clamp(4rem,22vw,7.5rem);font-weight:800;line-height:1;font-variant-numeric:tabular-nums;color:var(--hot);min-height:1em}
+#of{color:var(--mute);min-height:1.4em}
+#pick{margin-top:16px;width:100%;border:0;border-radius:18px;background:var(--hot);color:var(--hotink);font:inherit;font-size:1.3rem;font-weight:800;padding:18px;cursor:pointer;transition:transform .08s}
+#pick:active:not(:disabled){transform:scale(.97)}
+#pick:disabled{opacity:.4;cursor:not-allowed}
+#song{margin-top:18px;text-align:left;display:none}
+#song .t{font-size:1.4rem;font-weight:700;overflow-wrap:anywhere}
+#song .a{color:var(--mute);overflow-wrap:anywhere}
+#song a{display:inline-block;margin-top:10px;color:var(--ink);font-weight:700}
+label.chk{display:flex;gap:8px;align-items:center;color:var(--mute);cursor:pointer}
+.err{color:var(--hot);margin-top:8px;min-height:1.2em}
+@media (prefers-reduced-motion:reduce){#pick{transition:none}}
+</style>
+</head>
+<body>
+<main>
+<h1>Playlist Picker</h1>
+<p class="sub">Load a playlist, tap once, and a random number chooses your song.</p>
+
+<div class="card">
+  <strong>Get your songs from Spotify</strong>
+  <p class="sub" style="margin:6px 0 0">Export your playlist as a file on one of these sites, then drop the file below.</p>
+  <div class="row"><a class="ghost" style="text-decoration:none" href="https://www.tunemymusic.com/" target="_blank" rel="noopener">TuneMyMusic</a><a class="ghost" style="text-decoration:none" href="https://soundiiz.com/" target="_blank" rel="noopener">Soundiiz</a></div>
+</div>
+<div class="card" style="margin-top:14px">
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept=".csv,.txt,.json,.m3u,.m3u8,text/*">
+    Drop a playlist file here, or tap to choose one<br><small>.csv (Exportify), .txt, .json, .m3u</small>
+  </label>
+  <textarea id="paste" placeholder="Or paste songs here, one per line (Song - Artist)" aria-label="Paste songs"></textarea>
+  <div class="row">
+    <button class="ghost" id="load">Load pasted songs</button>
+    <button class="ghost" id="sample">Try a sample list</button>
+  </div>
+  <div class="err" id="err" role="alert"></div>
+  <div class="count" id="count">No playlist loaded yet.</div>
+</div>
+
+<div class="stage">
+  <div id="num" aria-live="polite">?</div>
+  <div id="of"></div>
+  <button id="pick" disabled>Pick a song</button>
+  <div class="row" style="justify-content:center"><label class="chk"><input type="checkbox" id="norepeat" checked> Don't repeat songs until all are played</label></div>
+  <div class="card" id="song"><div class="t" id="t"></div><div class="a" id="a"></div><a id="link" target="_blank" rel="noopener">Find it on Spotify</a></div>
+</div>
+</main>
+<script>
+(function(){
+var songs=[],used=[],busy=false;
+var $=function(id){return document.getElementById(id)};
+
+function parseCSV(text){
+  var rows=[],row=[],f="",q=false;
+  for(var i=0;i<text.length;i++){
+    var c=text[i];
+    if(q){ if(c=='"'){ if(text[i+1]=='"'){f+='"';i++} else q=false } else f+=c }
+    else if(c=='"') q=true;
+    else if(c==','){row.push(f);f=""}
+    else if(c=='\n'||c=='\r'){ if(c=='\r'&&text[i+1]=='\n')i++; row.push(f);f=""; if(row.some(function(x){return x.trim()}))rows.push(row); row=[] }
+    else f+=c;
+  }
+  row.push(f); if(row.some(function(x){return x.trim()}))rows.push(row);
+  return rows;
+}
+function fromCSV(text){
+  var rows=parseCSV(text); if(!rows.length)return [];
+  var h=rows[0].map(function(x){return x.trim().toLowerCase()});
+  var ti=h.findIndex(function(x){return /track name|^title$|^song|^name$/.test(x)});
+  var ai=h.findIndex(function(x){return /artist/.test(x)});
+  if(ti<0){ return rows.map(function(r){return {title:r[0].trim(),artist:(r[1]||"").trim()}}) }
+  return rows.slice(1).map(function(r){return {title:(r[ti]||"").trim(),artist:ai>=0?(r[ai]||"").replace(/;/g,", ").trim():""}}).filter(function(s){return s.title});
+}
+function fromLines(text){
+  return text.split(/\r?\n/).map(function(l){return l.trim()}).filter(function(l){return l&&l[0]!=="#"}).map(function(l){
+    var m=l.split(/\s+[-–—]\s+/);
+    return m.length>1?{title:m[0],artist:m.slice(1).join(" - ")}:{title:l,artist:""};
+  });
+}
+function fromJSON(text){
+  var d=JSON.parse(text); if(d&&!Array.isArray(d)){d=d.tracks||d.items||d.songs||d.playlist||[]}
+  return d.map(function(x){
+    if(typeof x==="string")return {title:x,artist:""};
+    x=x.track||x;
+    var a=x.artist||x.artists; if(Array.isArray(a))a=a.map(function(y){return y.name||y}).join(", ");
+    return {title:(x.name||x.title||x.track_name||"").toString(),artist:(a||"").toString()};
+  }).filter(function(s){return s.title});
+}
+function setSongs(list){
+  used=[];
+  $("err").textContent="";
+  $("song").style.display="none";$("num").textContent="?";$("of").textContent="";
+  if(!list.length){songs=[];$("pick").disabled=true;$("count").textContent="No songs found. Check the file or text and try again.";return}
+  songs=list;
+  $("count").textContent=songs.length+" song"+(songs.length==1?"":"s")+" loaded.";
+  $("pick").disabled=false;
+}
+function handleText(name,text){
+  try{
+    var n=(name||"").toLowerCase(),list;
+    if(n.slice(-5)==".json"||/^\s*[\[{]/.test(text))list=fromJSON(text);
+    else if(n.slice(-4)==".csv"||/^["']?(track|title|song|name)/i.test(text))list=fromCSV(text);
+    else list=fromLines(text);
+    setSongs(list);
+  }catch(e){$("err").textContent="Couldn't read that. Try a .csv, .txt or .json file with one song per row."}
+}
+function readFile(file){
+  if(!file)return;
+  var r=new FileReader();r.onload=function(){handleText(file.name,String(r.result))};r.readAsText(file);
+}
+$("file").addEventListener("change",function(e){readFile(e.target.files[0])});
+var drop=$("drop");
+["dragover","dragenter"].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.add("over")})});
+["dragleave","drop"].forEach(function(ev){drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.remove("over")})});
+drop.addEventListener("drop",function(e){readFile(e.dataTransfer.files[0])});
+$("load").addEventListener("click",function(){handleText("",$("paste").value)});
+$("sample").addEventListener("click",function(){
+  var s="Dreams - Fleetwood Mac\nBohemian Rhapsody - Queen\nHey Ya! - OutKast\nBlinding Lights - The Weeknd\nSmells Like Teen Spirit - Nirvana\nRolling in the Deep - Adele\nUptown Funk - Mark Ronson\nSeptember - Earth, Wind & Fire\nMr. Brightside - The Killers\nSunflower - Post Malone";
+  $("paste").value=s;handleText("",s);
+});
+
+function rand(n){ var a=new Uint32Array(1);crypto.getRandomValues(a);return Math.floor(a[0]/4294967296*n) }
+function nextIndex(){
+  var n=songs.length;
+  if($("norepeat").checked){
+    if(used.length>=n)used=[];
+    var pool=[];for(var i=0;i<n;i++)if(used.indexOf(i)<0)pool.push(i);
+    var k=pool[rand(pool.length)];used.push(k);return k;
+  }
+  return rand(n);
+}
+$("pick").addEventListener("click",function(){
+  if(busy||!songs.length)return;
+  busy=true;$("pick").disabled=true;$("song").style.display="none";
+  var idx=nextIndex(),n=songs.length,steps=0,total=18;
+  var reduce=window.matchMedia&&matchMedia("(prefers-reduced-motion: reduce)").matches;
+  $("of").textContent="Choosing a number from 1 to "+n+"…";
+  function land(){
+    var s=songs[idx];
+    $("num").textContent=idx+1;
+    $("of").textContent="Song #"+(idx+1)+" of "+n;
+    $("t").textContent=s.title;$("a").textContent=s.artist;
+    $("link").href="https://open.spotify.com/search/"+encodeURIComponent((s.title+" "+s.artist).trim());
+    $("song").style.display="block";
+    busy=false;$("pick").disabled=false;$("pick").textContent="Pick again";
+  }
+  if(reduce){land();return}
+  (function tick(){
+    if(steps>=total){land();return}
+    $("num").textContent=rand(n)+1;steps++;
+    setTimeout(tick,40+steps*steps*0.9);
+  })();
+});
+})();
+</script>
+</body>
+</html>
